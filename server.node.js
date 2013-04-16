@@ -10,10 +10,15 @@ var fs  			= require('fs');
 var colors  	    = require('colors');
 //https://github.com/Gagle/Node-Properties
 var properties  	= require('properties');
-https://github.com/broofa/node-mime
+//https://github.com/broofa/node-mime
 var mime			= require('mime');
-https://github.com/flatiron/winston
+//https://github.com/flatiron/winston
 var winston			= require('winston');
+//http://lesscss.org/
+var less			= require('less');
+var lessParser 		= new(less.Parser);
+//http://coffeescript.org/documentation/docs/coffee-script.html
+var coffee			= require('coffee-script');
 
 colors.setTheme({
 	info 	: 'green',
@@ -182,47 +187,6 @@ server.isAuthorizedExtension = function(fileExtension) {
 };
 
 
-// Load properties
-
-var config = {
-    comment: "#",
-    separator: "=",
-    sections: true
-};
-
-properties.load("./server.properties", config, function (error, p) {
-	if(error) {
-		server.echo('# Unable to load server properties > '.error, error.message);
-	} else {
-		server.echo('# Server properties ' + 'loaded'.info);
-		server.config = _serverConfiguration = p;
-
-		// Set logger
-		server.logger = new (winston.Logger)({
-		    transports: [
-		      new (winston.transports.File)({ filename: server.config.log.file || 'server.log', json:false, colorize: false })
-		    ]
-		});
-		server.logger.cli();
-		server.logger.extend(server);
-
-		properties.load(p.baseDir + "/config.properties", config, function (error, p) {
-			if(error) {
-				if(error.code != 'ENOENT') {
-					server.echo('# Unable to load application properties > '.error, error.message);
-					application.config = {};
-					run(server.config);
-				}
-			} else {
-				server.echo('# Application properties ' + 'loaded'.info);
-				application.config = p;
-				run(server.config);
-			}
-		});
-	}
-});
-
-
 // Routes
 server.routes = _routes = [];
 _routes.push(hashRoutePath('/:controller/', false, false));
@@ -297,18 +261,63 @@ var run = function(conf) {
 					server.echo('# File extension is not allowed by server : '.error + fileExtension);
 				} else {
 
+					var resourcePath = conf.publicDir + pathname;
+
+					if(fileExtension == 'less') 
+					{
+						if(fs.existsSync(conf.baseDir + 'cache/' + pathname + '.js')) {
+							resourcePath = conf.baseDir + 'cache/' + pathname + '.js';
+						}
+					}
+
 					// Load resource
-				    fs.readFile(conf.baseDir + pathname, function(err, data) { 
+				    fs.readFile(resourcePath, function(err, data) { 
 				        if (err) { 
 				            // 404 (FILE_NOT_FOUND)
 				            server.quickr(res, 404, 'FILE_NOT_FOUND');
-				            server.echo('# Resource ' + 'not found : '.error + conf.baseDir + pathname);
+				            server.echo('# Resource ' + 'not found : '.error + resourcePath);
 				        } else {
 				        	// 200 (OK)
-				        	var mimeType = mime.lookup(pathname);
-				        	server.quickr(res, 200, data, mimeType);
-				        	if(!mimeType) {
-				        		server.echo('# No mime type found' .error + ' : file ' + pathname);
+
+							if(fileExtension == 'less') {
+
+								lessParser.parse(data.toString(), function (err, tree) {
+								    if (err) { 
+							            // 500 (INTERNAL SERVER ERROR)
+							            server.quickr(res, 500, 'LESS_PARSE_ERROR');
+							            server.echo('# Less parse error : ', err.message.error);
+								    } else {
+								    	var mimeType = mime.lookup('less.css');
+								    	var css = tree.toCSS();
+								    	server.quickr(res, 200, css, mimeType);
+								    	fs.writeFile(conf.baseDir + 'cache/' + pathname + '.js', css, function(err) {
+								    		if(err) {
+								    			server.echo('# Unable to cache file : ', resourcePath, err.message.red);
+								    		} else {
+								    			server.echo('# Update cache file : ', resourcePath);
+								    		}
+								    	});
+								    }
+								});
+
+							} else if(fileExtension == 'coffee') {
+								try {
+									var js = coffee.compile(data.toString());
+									var mimeType = mime.lookup('coffee.js');
+									server.quickr(res, 200, js, mimeType);
+								} catch(exception) {
+						            // 500 (INTERNAL SERVER ERROR)
+						            server.quickr(res, 500, 'COFFEESCRIPT_COMPILE_ERROR');
+						            server.echo('# Coffee script compile error : ', exception.message.error);
+								}
+								
+							} else {
+
+					        	var mimeType = mime.lookup(pathname);
+					        	server.quickr(res, 200, data, mimeType);
+					        	if(!mimeType) {
+					        		server.echo('# No mime type found' .error + ' : file ' + pathname);
+					        	}
 				        	}
 				        } 
 				    });
@@ -324,3 +333,50 @@ var run = function(conf) {
 	}).listen(conf.server.port, conf.server.host);
 
 };
+
+// Load properties
+
+var config = {
+    comment: "#",
+    separator: "=",
+    sections: true
+};
+
+properties.load("./server.properties", config, function (error, p) {
+	if(error) {
+		server.echo('# Unable to load server properties > '.error, error.message);
+	} else {
+		server.echo('# Server properties ' + 'loaded'.info);
+
+		// Make sure publicDir is defined
+		if(!p.publicDir) {
+			p.publicDir = p.baseDir + 'public/';
+		}
+
+		server.config = _serverConfiguration = p;
+
+		// Set logger
+		server.logger = new (winston.Logger)({
+		    transports: [
+		      new (winston.transports.File)({ filename: server.config.log.file || 'server.log', json:false, colorize: false })
+		    ]
+		});
+		server.logger.cli();
+		server.logger.extend(server);
+
+		properties.load(p.baseDir + "config.properties", config, function (error, p) {
+			if(error) {
+				if(error.code != 'ENOENT') {
+					server.echo('# Unable to load application properties > '.error, error.message);
+				} else {
+					application.config = {};
+					run(server.config);
+				}
+			} else {
+				server.echo('# Application properties ' + 'loaded'.info);
+				application.config = p;
+				run(server.config);
+			}
+		});
+	}
+});
