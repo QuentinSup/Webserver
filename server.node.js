@@ -2,8 +2,9 @@
 // Core libs
 var http 			= require('http');
 var url  			= require('url');
+var path  			= require('path');
 var qs  			= require('querystring');
-var fs  			= require('fs');
+var fs  			= require('node-fs');
 
 // Other libs
 //https://github.com/marak/colors.js/
@@ -39,7 +40,7 @@ colors.setTheme({
 * @api private
 */
 
-routeMatch = function(route, path, params){
+var routeMatch = function(route, path, params){
 	var qsIndex = path.indexOf('?')
 	, pathname = ~qsIndex ? path.slice(0, qsIndex) : path
 	, m = route._regexp.exec(pathname);
@@ -240,7 +241,7 @@ var run = function(conf) {
 				if(params != null && params.controller) {
 					// Call a controller
 					try {
-						require(conf.baseDir + '/controllers/' + params.controller + '.njs');
+						require(path.join(conf.baseDir, 'controllers', params.controller + '.njs'));
 						server.controllers.run(params, res, req);
 					} catch(exception) {
 						// 500 Internal Server Error
@@ -265,8 +266,10 @@ var run = function(conf) {
 
 					if(fileExtension == 'less') 
 					{
-						if(fs.existsSync(conf.baseDir + 'cache/' + pathname + '.js')) {
-							resourcePath = conf.baseDir + 'cache/' + pathname + '.js';
+						var cachefile = path.join(conf._cacheDir,  pathname + '.js');
+						if(fs.existsSync(cachefile)) {
+							resourcePath = cachefile;
+							fileExtension = 'js';
 						}
 					}
 
@@ -288,15 +291,18 @@ var run = function(conf) {
 							            server.echo('# Less parse error : ', err.message.error);
 								    } else {
 								    	var mimeType = mime.lookup('less.css');
-								    	var css = tree.toCSS();
+								    	var css = tree.toCSS({ compress: true });
 								    	server.quickr(res, 200, css, mimeType);
-								    	fs.writeFile(conf.baseDir + 'cache/' + pathname + '.js', css, function(err) {
-								    		if(err) {
-								    			server.echo('# Unable to cache file : ', resourcePath, err.message.red);
-								    		} else {
-								    			server.echo('# Update cache file : ', resourcePath);
-								    		}
+								    	fs.mkdir(path.join(conf._cacheDir, path.dirname(pathname)), function() {
+									    	fs.writeFile(path.join(conf._cacheDir, pathname + '.js'), css, function(err) {
+									    		if(err) {
+									    			server.echo('# Unable to cache file : ', resourcePath, err.message.red);
+									    		} else {
+									    			server.echo('# Update cache file : ', resourcePath);
+									    		}
+									    	});	
 								    	});
+								    	
 								    }
 								});
 
@@ -327,7 +333,7 @@ var run = function(conf) {
 		});
 
 	}).on('error', function(err) {
-		console.log('# Unable to run server '.red + 'at http://' + conf.server.host + ':' +  conf.server.port.toString().magenta + '/' , err.message);
+		server.echo('# Unable to run server '.red + 'at http://' + conf.server.host + ':' +  conf.server.port.toString().magenta + '/' , err.message);
 	}).on('listening', function() {
 		server.echo('# Server running at http://' + (conf.server.host || '') + ':' +  conf.server.port.toString().magenta + '/');	
 	}).listen(conf.server.port, conf.server.host);
@@ -352,6 +358,14 @@ properties.load("./server.properties", config, function (error, p) {
 		if(!p.publicDir) {
 			p.publicDir = p.baseDir + 'public/';
 		}
+
+		p._cacheDir = path.join(p.baseDir , 'cache');
+
+		fs.mkdir(p.baseDir + 'cache', function(err) {
+			if(err && err.code != 'EEXIST') {
+				server.echo('# Unable to create cache directory :', err.message.red);
+			}
+		});
 
 		server.config = _serverConfiguration = p;
 
