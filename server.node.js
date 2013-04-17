@@ -30,121 +30,15 @@ colors.setTheme({
 	error 	: 'red'
 });
 
-/**
-* Check if this route matches `path`, if so
-* populate `params`.
-*
-* @param {object} route
-* @param {string} path
-* @return {array}
-* @api private
-*/
-
-var routeMatch = function(route, path, params){
-	var qsIndex = path.indexOf('?')
-	, pathname = ~qsIndex ? path.slice(0, qsIndex) : path
-	, m = route._regexp.exec(pathname);
-
-	params = params || {};
-
-	if (m) {
-
-		for (var i = 1, len = m.length; i < len; ++i) 
-		{
-			var key = route._keys[i - 1];
-
-			var val = 'string' == typeof m[i]
-			? decodeURIComponent(m[i])
-			: m[i];
-
-			if (key) {
-				params[key.name] = undefined !== params[key.name]
-				  ? params[key.name]
-				  : val;
-			} else {
-				params.push(val);
-			}
-		}
-		return true;
-
-	}
-
-	return false;
-};
-
-/**
-* Normalize the given path string,
-* returning a regular expression.
-*
-* An empty array should be passed,
-* which will contain the placeholder
-* key names. For example "/user/:id" will
-* then contain ["id"].
-*
-* @param  {String|RegExp|Array} path
-* @param  {Boolean} sensitive
-* @param  {Boolean} strict
-* @return {Route}
-* @api private
-*/
-
-var hashRoutePath = function(path, sensitive, strict) {
-	var keys = [];
-	if (path instanceof RegExp) return path;
-	if (path instanceof Array) path = '(' + path.join('|') + ')';
-	path = path
-	  .concat(strict ? '' : '/?')
-	  .replace(/\/\(/g, '(?:/')
-	  .replace(/(\/)?(\.)?:(\w+)(?:(\(.*?\)))?(\?)?/g, function(_, slash, format, key, capture, optional){
-	    keys.push({ name: key, optional: !! optional });
-	    slash = slash || '';
-	    return ''
-	      + (optional ? '' : slash)
-	      + '(?:'
-	      + (optional ? slash : '')
-	      + (format || '') + (capture || (format && '([^/.]+?)' || '([^/]+?)')) + ')'
-	      + (optional || '');
-	  })
-	  .replace(/([\/.])/g, '\\$1')
-	  .replace(/\*/g, '(.*)');
-	return {
-		route   : path,
-		_regexp : new RegExp('^' + path + '$', sensitive ? '' : 'i'),
-		_keys   : keys,
-		match 	: function(path, params) {
-			return routeMatch(this, path, params);
-		}
-	}
-};
-
-exports = server = {};
-
-_serverConfiguration = {};
-_controllers = {};
-
-var register = function(name, obj) {
-	_controllers[name] = obj;
-};
-
-var get = function(name) {
-	return _controllers[name];
-};
-
-var run = function(params, response, request) {
-	_controllers[params.controller].run(response, request, params);
-};
-
+serverConfiguration = {};
+server = {}
 server.config = {};
-server.controllers = {
-	register: register,
-	get: get,
-	run: run,
-	getAll: function() {
-		return _controllers;
-	}
-};
-server.application = application = {};
 
+// Import modules
+require('./modules/_controllers');
+require('./modules/_routes');
+
+server.application = application = {};
 
 server.quickr = function(response, statusCode, data, mimeType) {
 	try {
@@ -188,21 +82,32 @@ server.isAuthorizedExtension = function(fileExtension) {
 };
 
 
-// Routes
-server.routes = _routes = [];
-_routes.push(hashRoutePath('/:controller/', false, false));
-_routes.push(hashRoutePath('/:controller/:action/:id', false, false));
+server.applyConfiguration = function(conf) {
 
-
-var getRoutePathParameters = function(pathname) {
-	var params = {};
-	for(var i = 0, len = server.routes.length; i < len; i++) {
-		var isMatched = server.routes[i].match(pathname, params);
-		if(isMatched) {
-			return params;
-		}
+	// Make sure publicDir is defined
+	if(!conf.publicDir) {
+		conf.publicDir = conf.baseDir + 'public/';
 	}
-	return null;
+
+	conf._cacheDir = path.join(conf.baseDir , 'cache');
+
+	fs.mkdir(conf.baseDir + 'cache', function(err) {
+		if(err && err.code != 'EEXIST') {
+			server.echo('# Unable to create cache directory :', err.message.red);
+		}
+	});
+
+	// Set logger
+	server.logger = new (winston.Logger)({
+	    transports: [
+	      new (winston.transports.File)({ filename: conf.log.file || 'server.log', json:false, colorize: false })
+	    ]
+	});
+	server.logger.cli();
+	server.logger.extend(server);
+
+	return 	server.config = serverConfiguration = conf;
+
 };
 
 // Run server
@@ -236,23 +141,23 @@ var run = function(conf) {
 	    	// Load resource
 			if(pathname.lastIndexOf('.') == -1) {
 
-				var params = getRoutePathParameters(pathname);
+				var params = server.routes.getRoutePathParameters(pathname);
 
 				if(params != null && params.controller) {
 					// Call a controller
 					try {
-						require(path.join(conf.baseDir, 'controllers', params.controller + '.njs'));
+						require(path.join(conf.baseDir, 'controllers', params.controller + '.js'));
 						server.controllers.run(params, res, req);
 					} catch(exception) {
 						// 500 Internal Server Error
 						server.quickr(res, 500);
-						server.echo('# Unable to run controller : '.error + controllerName);
+						server.echo('# Unable to run controller : '.error, controllerName);
 						server.echo(exception);
 					}
 				} else {
 		            // 404 (FILE_NOT_FOUND)
 		            server.quickr(res, 404, 'FILE_NOT_FOUND');
-		            server.echo('# Controller ' + 'not found '.error + conf.baseDir + pathname);
+		            server.echo('# Controller ', 'not found '.error, conf.baseDir + pathname);
 				}
 			} else {
 				var fileExtension 	= pathname.substr(pathname.lastIndexOf('.') + 1).toLowerCase();
@@ -278,7 +183,7 @@ var run = function(conf) {
 				        if (err) { 
 				            // 404 (FILE_NOT_FOUND)
 				            server.quickr(res, 404, 'FILE_NOT_FOUND');
-				            server.echo('# Resource ' + 'not found : '.error + resourcePath);
+				            server.echo('# Resource ', 'not found : '.error, resourcePath);
 				        } else {
 				        	// 200 (OK)
 
@@ -333,7 +238,7 @@ var run = function(conf) {
 		});
 
 	}).on('error', function(err) {
-		server.echo('# Unable to run server '.red + 'at http://' + conf.server.host + ':' +  conf.server.port.toString().magenta + '/' , err.message);
+		server.echo('# Unable to run server '.error, 'at http://' + conf.server.host + ':', conf.server.port.toString().magenta, '/' , err.message);
 	}).on('listening', function() {
 		server.echo('# Server running at http://' + (conf.server.host || '') + ':' +  conf.server.port.toString().magenta + '/');	
 	}).listen(conf.server.port, conf.server.host);
@@ -342,43 +247,20 @@ var run = function(conf) {
 
 // Load properties
 
-var config = {
+var config_properties = {
     comment: "#",
     separator: "=",
     sections: true
 };
 
-properties.load("./server.properties", config, function (error, p) {
+properties.load("./server.properties", config_properties, function (error, p) {
 	if(error) {
 		server.echo('# Unable to load server properties > '.error, error.message);
 	} else {
 		server.echo('# Server properties ' + 'loaded'.info);
+		server.applyConfiguration(p);
 
-		// Make sure publicDir is defined
-		if(!p.publicDir) {
-			p.publicDir = p.baseDir + 'public/';
-		}
-
-		p._cacheDir = path.join(p.baseDir , 'cache');
-
-		fs.mkdir(p.baseDir + 'cache', function(err) {
-			if(err && err.code != 'EEXIST') {
-				server.echo('# Unable to create cache directory :', err.message.red);
-			}
-		});
-
-		server.config = _serverConfiguration = p;
-
-		// Set logger
-		server.logger = new (winston.Logger)({
-		    transports: [
-		      new (winston.transports.File)({ filename: server.config.log.file || 'server.log', json:false, colorize: false })
-		    ]
-		});
-		server.logger.cli();
-		server.logger.extend(server);
-
-		properties.load(p.baseDir + "config.properties", config, function (error, p) {
+		properties.load(p.baseDir + "config.properties", config_properties, function (error, p) {
 			if(error) {
 				if(error.code != 'ENOENT') {
 					server.echo('# Unable to load application properties > '.error, error.message);
@@ -387,10 +269,12 @@ properties.load("./server.properties", config, function (error, p) {
 					run(server.config);
 				}
 			} else {
-				server.echo('# Application properties ' + 'loaded'.info);
+				server.echo('# Application properties ', 'loaded'.info);
 				application.config = p;
 				run(server.config);
 			}
 		});
 	}
 });
+
+exports = server;
