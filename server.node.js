@@ -91,7 +91,7 @@ server.applyConfiguration = function(conf) {
 
 	conf._cacheDir = path.join(conf.baseDir , 'cache');
 
-	fs.mkdir(conf.baseDir + 'cache', function(err) {
+	fs.mkdir(conf._cacheDir, function(err) {
 		if(err && err.code != 'EEXIST') {
 			server.echo('# Unable to create cache directory :', err.message.red);
 		}
@@ -151,8 +151,8 @@ var run = function(conf) {
 					} catch(exception) {
 						// 500 Internal Server Error
 						server.quickr(res, 500);
-						server.echo('# Unable to run controller : '.error, controllerName);
-						server.echo(exception);
+						server.echo('# Unable to run controller : '.error, params.controller.info);
+						server.echo(exception.message.error);
 					}
 				} else {
 		            // 404 (FILE_NOT_FOUND)
@@ -173,8 +173,8 @@ var run = function(conf) {
 					{
 						var cachefile = path.join(conf._cacheDir,  pathname + '.js');
 						if(fs.existsSync(cachefile)) {
-							resourcePath = cachefile;
-							fileExtension = 'js';
+							//resourcePath = cachefile;
+							//fileExtension = 'js';
 						}
 					}
 
@@ -260,7 +260,7 @@ properties.load("./server.properties", config_properties, function (error, p) {
 		server.echo('# Server properties ' + 'loaded'.info);
 		server.applyConfiguration(p);
 
-		properties.load(p.baseDir + "config.properties", config_properties, function (error, p) {
+		properties.load(path.join(p.baseDir, "config.properties"), config_properties, function (error, p) {
 			if(error) {
 				if(error.code != 'ENOENT') {
 					server.echo('# Unable to load application properties > '.error, error.message);
