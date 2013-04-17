@@ -100,7 +100,7 @@ server.applyConfiguration = function(conf) {
 	// Set logger
 	server.logger = new (winston.Logger)({
 	    transports: [
-	      new (winston.transports.File)({ filename: conf.log.file || 'server.log', json:false, colorize: false })
+	      new (winston.transports.File)({ filename: conf.log.file || 'server.log', json:false, maxsize:10248576, colorize: false })
 	    ]
 	});
 	server.logger.cli();
