@@ -17,7 +17,6 @@ var mime			= require('mime');
 var winston			= require('winston');
 //http://lesscss.org/
 var less			= require('less');
-var lessParser 		= new(less.Parser);
 //http://coffeescript.org/documentation/docs/coffee-script.html
 var coffee			= require('coffee-script');
 
@@ -188,8 +187,11 @@ var run = function(conf) {
 				        	// 200 (OK)
 
 							if(fileExtension == 'less') {
-
-								lessParser.parse(data.toString(), function (err, tree) {
+								var parser = new(less.Parser)({
+							    	paths: [path.dirname(resourcePath)],
+							    	filename: resourcePath
+								});
+								parser.parse(data.toString(), function (err, tree) {
 								    if (err) { 
 							            // 500 (INTERNAL SERVER ERROR)
 							            server.quickr(res, 500, 'LESS_PARSE_ERROR');
@@ -253,7 +255,7 @@ var config_properties = {
     sections: true
 };
 
-properties.load("./server.properties", config_properties, function (error, p) {
+properties.load("./conf/server.properties", config_properties, function (error, p) {
 	if(error) {
 		server.echo('# Unable to load server properties > '.error, error.message);
 	} else {
