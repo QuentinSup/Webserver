@@ -52,6 +52,10 @@ server.quickr = function(response, statusCode, data, mimeType) {
 	}
 };
 
+server.quickrJSON = function(response, statusCode, data) {
+	server.quickr(response, statusCode, JSON.stringify(data), 'application/json');
+};
+
 // Make server.echo an alias of console.log
 server.echo = function() {
 	var args = arguments;
@@ -110,7 +114,6 @@ server.applyConfiguration = function(conf) {
 };
 
 // Run server
-
 var run = function(conf) {
 
 	http.createServer(function (req, res) {
@@ -148,10 +151,16 @@ var run = function(conf) {
 						require(path.join(conf.baseDir, 'controllers', params.controller + '.js'));
 						server.controllers.run(params, res, req);
 					} catch(exception) {
-						// 500 Internal Server Error
-						server.quickr(res, 500);
-						server.echo('# Unable to run controller : '.error, params.controller.info);
-						server.echo(exception.message.error);
+						server.echo(exception.message.info);
+						try {
+							require('./' + path.join('plugins', params.controller, params.controller + '.js'));
+							server.controllers.run(params, res, req);
+						} catch(exception) {
+							// 500 Internal Server Error
+							server.quickr(res, 500);
+							server.echo('# Unable to run controller : '.error, params.controller.info);
+							server.echo(exception.message.error);
+						}
 					}
 				} else {
 		            // 404 (FILE_NOT_FOUND)
@@ -170,10 +179,10 @@ var run = function(conf) {
 
 					if(fileExtension == 'less') 
 					{
-						var cachefile = path.join(conf._cacheDir,  pathname + '.js');
+						var cachefile = path.join(conf._cacheDir,  pathname + '.css');
 						if(fs.existsSync(cachefile)) {
 							//resourcePath = cachefile;
-							//fileExtension = 'js';
+							//fileExtension = 'css';
 						}
 					}
 
@@ -182,7 +191,7 @@ var run = function(conf) {
 				        if (err) { 
 				            // 404 (FILE_NOT_FOUND)
 				            server.quickr(res, 404, 'FILE_NOT_FOUND');
-				            server.echo('# Resource ', 'not found : '.error, resourcePath);
+				            server.echo('# Resource ', 'not found : '.error, resourcePath.data);
 				        } else {
 				        	// 200 (OK)
 
@@ -201,7 +210,7 @@ var run = function(conf) {
 								    	var css = tree.toCSS({ compress: true });
 								    	server.quickr(res, 200, css, mimeType);
 								    	fs.mkdir(path.join(conf._cacheDir, path.dirname(pathname)), function() {
-									    	fs.writeFile(path.join(conf._cacheDir, pathname + '.js'), css, function(err) {
+									    	fs.writeFile(path.join(conf._cacheDir, pathname + '.css'), css, function(err) {
 									    		if(err) {
 									    			server.echo('# Unable to cache file : ', resourcePath, err.message.red);
 									    		} else {
@@ -226,7 +235,7 @@ var run = function(conf) {
 								
 							} else {
 
-					        	var mimeType = mime.lookup(pathname);
+					        	var mimeType = mime.lookup(resourcePath);
 					        	server.quickr(res, 200, data, mimeType);
 					        	if(!mimeType) {
 					        		server.echo('# No mime type found' .error + ' : file ' + pathname);
@@ -242,7 +251,8 @@ var run = function(conf) {
 	}).on('error', function(err) {
 		server.echo('# Unable to run server '.error, 'at http://' + conf.server.host + ':', conf.server.port.toString().magenta, '/' , err.message);
 	}).on('listening', function() {
-		server.echo('# Server running at http://' + (conf.server.host || '') + ':' +  conf.server.port.toString().magenta + '/');	
+		server.echo('# Server running at', 'http://'.magenta + '127.0.0.1'.magenta + ':' + conf.server.port.toString().data);
+		server.echo('# Autorized remote mask :'.grey, (conf.server.host || '').data);	
 	}).listen(conf.server.port, conf.server.host);
 
 };
