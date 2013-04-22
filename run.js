@@ -22,7 +22,7 @@ var coffee			= require('coffee-script');
 
 colors.setTheme({
 	info 	: 'green',
-	data 	: 'grey',
+	data 	: 'white',
 	help 	: 'cyan',
 	warn 	: 'yellow',
 	debug 	: 'blue',
@@ -48,7 +48,7 @@ server.quickr = function(response, statusCode, data, mimeType) {
 		server.echo('# Unable to return response > '.error, exception);	
 		// 500 Internal Server Error
 		response.writeHead(500);
-		response.end();
+		response.end(data);
 	}
 };
 
@@ -177,7 +177,7 @@ var run = function(conf) {
 
 					var resourcePath = conf.publicDir + pathname;
 
-					if(fileExtension == 'less') 
+					if(fileExtension == 'less')
 					{
 						var cachefile = path.join(conf._cacheDir,  pathname + '.css');
 						if(fs.existsSync(cachefile)) {
