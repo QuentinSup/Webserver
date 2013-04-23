@@ -33,7 +33,7 @@ serverConfiguration = {};
 server = {}
 server.config = {};
 
-// Import modules
+// Import base modules
 require('./modules/_controllers');
 require('./modules/_routes');
 
@@ -43,12 +43,12 @@ server.quickr = function(response, statusCode, data, mimeType) {
 	try {
 		mimeType = mimeType || 'text/plain';
 		response.writeHead(statusCode, {'Content-Type': mimeType });
-		response.end(data);
+		response.end(data, 'utf8');
 	} catch(exception) {
 		server.echo('# Unable to return response > '.error, exception);	
 		// 500 Internal Server Error
 		response.writeHead(500);
-		response.end(data);
+		response.end(data, 'utf8');
 	}
 };
 
@@ -113,6 +113,40 @@ server.applyConfiguration = function(conf) {
 
 };
 
+server.require = function(name) {
+	return require('./' + path.join('plugins', name, name + '.js'));
+};
+
+server.runController = function(params, response, request, conf) {
+	// Call a controller
+	conf = conf || server.config;
+	if(!server.controllers.exists(params.controller))
+	{
+		try {
+			require(path.join(conf.baseDir, 'controllers', params.controller + '.js'));
+			server.echo('# Controller', params.controller.info, 'loaded');
+		} catch(exception) {
+			try {
+				server.require(params.controller);
+				server.echo('# Controller [server]', params.controller.info, 'loaded');
+			} catch(exception) {
+				// 500 Internal Server Error
+				server.quickr(response, 500);
+				server.echo('# Unable to load controller : '.error, params.controller.info);
+				server.echo(exception.message.error);
+			}
+		}
+	} 
+	try {
+		server.controllers.run(params, response, request);
+	} catch(exception) {
+		// 500 Internal Server Error
+		server.quickr(response, 500);
+		server.echo('# Unable to run controller : '.error, params.controller.info);
+		server.echo(exception.message.info);
+	}
+};
+
 // Run server
 var run = function(conf) {
 
@@ -146,26 +180,11 @@ var run = function(conf) {
 				var params = server.routes.getRoutePathParameters(pathname);
 
 				if(params != null && params.controller) {
-					// Call a controller
-					try {
-						require(path.join(conf.baseDir, 'controllers', params.controller + '.js'));
-						server.controllers.run(params, res, req);
-					} catch(exception) {
-						server.echo(exception.message.info);
-						try {
-							require('./' + path.join('plugins', params.controller, params.controller + '.js'));
-							server.controllers.run(params, res, req);
-						} catch(exception) {
-							// 500 Internal Server Error
-							server.quickr(res, 500);
-							server.echo('# Unable to run controller : '.error, params.controller.info);
-							server.echo(exception.message.error);
-						}
-					}
+					server.runController(params, res, req, conf);
 				} else {
 		            // 404 (FILE_NOT_FOUND)
 		            server.quickr(res, 404, 'FILE_NOT_FOUND');
-		            server.echo('# Controller ', 'not found '.error, conf.baseDir + pathname);
+		            server.echo('# Controller', 'missing '.error, conf.baseDir + pathname);
 				}
 			} else {
 				var fileExtension 	= pathname.substr(pathname.lastIndexOf('.') + 1).toLowerCase();
@@ -249,7 +268,8 @@ var run = function(conf) {
 		});
 
 	}).on('error', function(err) {
-		server.echo('# Unable to run server '.error, 'at http://' + conf.server.host + ':', conf.server.port.toString().magenta, '/' , err.message);
+		server.echo('# Unable to run server'.error, 'at http://' + conf.server.host + ':', conf.server.port.toString().magenta, '/' , err.message);
+		throw err;
 	}).on('listening', function() {
 		server.echo('# Server running at', 'http://'.magenta + '127.0.0.1'.magenta + ':' + conf.server.port.toString().data);
 		server.echo('# Autorized remote mask :'.grey, (conf.server.host || '').data);	

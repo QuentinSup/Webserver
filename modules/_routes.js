@@ -103,6 +103,8 @@ var getRoutePathParameters = function(pathname) {
 
 // Routes
 _routes.push(hashRoutePath('/:controller/', false, false));
+_routes.push(hashRoutePath('/:controller/:action', false, false));
+_routes.push(hashRoutePath('/:controller/:action/', false, false));
 _routes.push(hashRoutePath('/:controller/:action/:id', false, false));
 
 exports = server.routes = {

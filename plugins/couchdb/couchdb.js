@@ -19,6 +19,30 @@ var couchdb = (function() {
 		return _conn = nano((protocol || 'http') + '://' + host + ':' + port);
 	};
 
+	var get = function(id, fn) {
+ 		_db.get(id, fn);
+	};
+
+	var getAll = function(fn) {
+ 		_db.list({ revs_info: true, include_docs: true }, fn);
+	};
+
+	var insert = function(id, doc, fn) {
+		_db.insert(doc, id,  function(err, xdoc) {
+			if(!err) {
+		    	doc._id = xdoc.id;
+		    	doc._rev = xdoc.rev;
+			}
+			if(fn) {
+				fn(err, doc);
+			}
+		})
+	};
+
+	var destroy = function(id, rev, fn) {
+		_db.destroy(id, rev, fn);
+	};
+
 	var run = function(response, request, params) {
 		
 		if(request.method == 'GET') {
@@ -28,28 +52,28 @@ var couchdb = (function() {
 			if(pid) {
 
 				if(pid == '*') {
-			 		_db.list({ revs_info: true, include_docs: true }, function(err, docs) {
+			 		getAll(function(err, docs) {
 				        if(!err) {
 					    	server.quickrJSON(response, 200, docs.rows);
 						} else {
-							console.log('> COUCHDB documents not found'.red, err.message);
+							server.echo('> COUCHDB documents not found'.red, err.message);
 							server.quickr(response, 404);
 						}
 				    });
 				} else {
-			 		_db.get(pid, function(err, doc) {
+			 		get(pid, function(err, doc) {
 				        if(!err) {
 					    	server.quickrJSON(response, 200, doc);
 						} else {
 							server.quickr(response, 409);
-							console.log('> COUCHDB document ' + pid + ' not found'.red, err.message);
+							server.echo('> COUCHDB document ' + pid + ' not found'.red, err.message);
 						}
 				    });
 			 	}
 
 			} else {
 				server.quickr(response, 400);
-				console.log('> COUCHDB "id" parameter is required'.red);
+				server.echo('> COUCHDB "id" parameter is required'.red);
 			}
 
 		} else if(request.method == 'PUT') {
@@ -57,27 +81,24 @@ var couchdb = (function() {
 			var pid = request.path.query.id;
 			var prev = request.path.query.rev;
 
-			_db.get(pid, function(err, doc) {
+			get(pid, function(err, doc) {
 
 				if(!err) {
 
 					doc = request.data;
 
-					_db.insert(doc, pid, function(err, xdoc) {
+					insert(pid, doc, function(err, doc) {
 						if(!err) {
-					    	doc._id = xdoc.id;
-					    	doc._rev = xdoc.rev;
 					    	server.quickrJSON(response, 200, doc);
-					    	console.log('> COUCHDB document ' + pid.magenta + ' updated'.green);
+					    	server.echo('> COUCHDB document ' + pid.magenta + ' updated'.green);
 						} else {
 							server.quickrJSON(response, 409, doc);
-							console.log('> COUCHDB document ' + pid.magenta + ' not updated'.red, err.message);
+							server.echo('> COUCHDB document ' + pid.magenta + ' not updated'.red, err.message);
 						}
-
 					});
 				} else {
 					server.quickr(response, 409);
-					console.log('> COUCHDB document ' + pid + ' not found'.red, err.message);
+					server.echo('> COUCHDB document ' + pid + ' not found'.red, err.message);
 				}
 			});
 
@@ -85,15 +106,13 @@ var couchdb = (function() {
 
 			var doc = request.data;
 
-			_db.insert(doc, doc.id, function(err, xdoc) {
+			insert(doc.id, doc, function(err, doc) {
 				if(!err) {
-			    	console.log('> COUCHDB document created'.green);
-			    	doc._id = xdoc.id;
-			    	doc._rev = xdoc.rev;
-			    	server.quickr(response, 201, JSON.stringify(doc));
+			    	server.echo('> COUCHDB document created'.green);
+			    	server.quickrJSON(response, 201, doc);
 				} else {
-					console.log('> COUCHDB document not created'.red, err.message);
-					server.quickr(response, 409, JSON.stringify(doc));
+					server.echo('> COUCHDB document not created'.red, err.message);
+					server.quickrJSON(response, 409, doc);
 				}
 
 			});
@@ -103,26 +122,30 @@ var couchdb = (function() {
 			var pid = request.path.query.id;
 			var prev = request.path.query.rev;
 
-			_db.destroy(pid, prev, function(err, doc) {
+			destroy(pid, prev, function(err, doc) {
 				if(!err) {
-			    	console.log('> COUCHDB document ' + pid.magenta + ' destroyed'.green);
-			    	server.quickr(response, 200, JSON.stringify(doc));
+			    	server.echo('> COUCHDB document ' + pid.magenta + ' destroyed'.green);
+			    	server.quickrJSON(response, 200, doc);
 				} else {
-					console.log('> COUCHDB ' + pid.magenta + ' not destroyed'.red, err.message);
-					server.quickr(response, 202, JSON.stringify(doc));
+					server.echo('> COUCHDB ' + pid.magenta + ' not destroyed'.red, err.message);
+					server.quickrJSON(response, 202, doc);
 				}
 			});
 
 		} else {
 
 			server.quickr(response, 501);
-			console.log('> Request is not implemented'.red);
+			server.echo('> Request is not implemented'.red);
 		}
 
 	};
 
 	return {
 		connect: connect,
+		get: get,
+		getAll: getAll,
+		insert: insert,
+		destroy: destroy,
 		use: use,
 		run: run
 	};
@@ -136,4 +159,4 @@ couchdb.use(application.config.couchdb.dbname);
 server.controllers.register('couchdb', couchdb);
 
 // Export controller (to direct use)
-exports = couchdb;
+module.exports = couchdb;
