@@ -23,8 +23,11 @@ var couchdb = (function() {
  		_db.get(id, fn);
 	};
 
-	var getAll = function(fn) {
- 		_db.list({ revs_info: true, include_docs: true }, fn);
+	var getAll = function(fn, opts) {
+		opts = opts || {};
+		opts.revs_info = true;
+		opts.include_docs = true;
+ 		_db.list(opts, fn);
 	};
 
 	var insert = function(id, doc, fn) {

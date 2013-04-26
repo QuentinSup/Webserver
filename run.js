@@ -19,6 +19,8 @@ var winston			= require('winston');
 var less			= require('less');
 //http://coffeescript.org/documentation/docs/coffee-script.html
 var coffee			= require('coffee-script');
+//https://github.com/ashtuchkin/iconv-lite
+var iconv = require('iconv-lite');
 
 colors.setTheme({
 	info 	: 'green',
@@ -84,6 +86,13 @@ server.isAuthorizedExtension = function(fileExtension) {
 	return false;
 };
 
+server.encode = function(str, encoding) {
+	return iconv.encode(str, encoding);
+};
+
+server.decode = function(buf, encoding) {
+	return iconv.decode(buf, encoding);
+};
 
 server.applyConfiguration = function(conf) {
 
