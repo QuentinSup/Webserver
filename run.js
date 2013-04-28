@@ -20,7 +20,9 @@ var less			= require('less');
 //http://coffeescript.org/documentation/docs/coffee-script.html
 var coffee			= require('coffee-script');
 //https://github.com/ashtuchkin/iconv-lite
-var iconv = require('iconv-lite');
+var iconv 			= require('iconv-lite');
+//https://github.com/andris9/Nodemailer
+var mailer			= require('nodemailer');
 
 colors.setTheme({
 	info 	: 'green',
@@ -123,7 +125,21 @@ server.applyConfiguration = function(conf) {
 };
 
 server.require = function(name) {
+	return require(name);
+};
+
+server.plugins = function(name) {
 	return require('./' + path.join('plugins', name, name + '.js'));
+};
+
+server.writeFileToCache = function(fileName, data, fn) {
+	var cachefile = path.join(server.config._cacheDir, fileName);
+	fs.writeFile(cachefile, data, fn);
+};
+
+server.getFileFromCache = function(fileName, fn) {
+	var cachefile = path.join(server.config._cacheDir, fileName);
+	fs.readFile(cachefile, fn);
 };
 
 server.runController = function(params, response, request, conf) {
@@ -136,7 +152,7 @@ server.runController = function(params, response, request, conf) {
 			server.echo('# Controller', params.controller.info, 'loaded');
 		} catch(exception) {
 			try {
-				server.require(params.controller);
+				server.plugins(params.controller);
 				server.echo('# Controller [server]', params.controller.info, 'loaded');
 			} catch(exception) {
 				// 500 Internal Server Error
@@ -156,8 +172,58 @@ server.runController = function(params, response, request, conf) {
 	}
 };
 
+var preloadControllers = function(conf) {
+	server.echo('# Preload controllers'.info);
+	var controllersDirectory = path.join(conf.baseDir, 'controllers');
+	fs.readdir(controllersDirectory, function(err, list) {
+		if(!err) {
+			list.forEach(function(file) {
+				if(path.extname(file) == '.js') {
+					require(path.join(controllersDirectory, file));
+					server.echo('# Controller', file.info, 'preloaded');
+				};
+			});
+		} else {
+			server.echo(err.message.error);
+		}
+	});
+};
+
+var sendMail = function(options, fn) {
+	if(server.emailer.transport) {
+		fn = fn || function() {};
+		options.from = options.from || (server.config.emailer.from || 'Node http server');
+		server.emailer.transport.sendMail(options, function(err, response) {
+			if(err) {
+				server.echo(err.message.error);
+			}
+			fn(err, response);
+		});
+	} else {
+		server.echo('# No transport configured'.error);
+	}
+};
+
+server.emailer = {
+	send: sendMail
+};
+
 // Run server
 var run = function(conf) {
+
+	// Prepare emailer
+	if(conf.emailer && conf.emailer.service) {
+		server.emailer.transport = mailer.createTransport("SMTP", {
+		    service: conf.emailer.service,
+		    auth: {
+		        user: conf.emailer.user,
+		        pass: new Buffer(conf.emailer.pass, 'base64').toString()
+		    }
+		});
+	}
+
+	// Preload controllers
+	preloadControllers(conf);
 
 	http.createServer(function (req, res) {
 
