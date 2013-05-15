@@ -33,6 +33,12 @@ colors.setTheme({
 	error 	: 'red'
 });
 
+var config_properties = {
+    comment: "#",
+    separator: "=",
+    sections: true
+};
+
 serverConfiguration = {};
 server = {}
 server.config = {};
@@ -42,6 +48,7 @@ require('./modules/_controllers');
 require('./modules/_routes');
 
 server.application = application = {};
+server.vhosts = vhosts = {};
 
 server.quickr = function(response, statusCode, data, mimeType) {
 	try {
@@ -98,12 +105,7 @@ server.decode = function(buf, encoding) {
 
 server.applyConfiguration = function(conf) {
 
-	// Make sure publicDir is defined
-	if(!conf.publicDir) {
-		conf.publicDir = conf.baseDir + 'public/';
-	}
-
-	conf._cacheDir = path.join(conf.baseDir , 'cache');
+	conf._cacheDir = './cache';
 
 	fs.mkdir(conf._cacheDir, function(err) {
 		if(err && err.code != 'EEXIST') {
@@ -189,6 +191,53 @@ var preloadControllers = function(conf) {
 	});
 };
 
+var loadVirtualHosts = function(conf) {
+	server.echo('# Load vhosts'.info);
+	var confDir = './conf/vhosts/';
+	fs.readdir(confDir, function(err, list) {
+		if(!err) {
+			list.forEach(function(file) {
+				if(path.extname(file) == '.properties') {
+					properties.load(path.join(confDir, file), config_properties, function (error, p) {
+						if(error) {
+							console.log(error.message.error);
+						}
+						var vhostId = path.basename(file, '.properties');
+						var vhost = server.vhosts[vhostId] = {};
+						vhost.ini = p || {};
+						vhost.id  = vhostId;
+						if(!vhost.ini.publicDir) {
+							vhost.ini.publicDir = path.join(vhost.ini.baseDir, 'public');
+						}
+						loadVHostConf(vhost);
+						server.echo('# Virtual Hosts', file.info, 'loaded');
+					});
+				};
+			});
+			run(conf);
+		} else {
+			server.echo(err.message.error);
+		}
+	});
+};
+
+var loadVHostConf = function(vhost) {
+	properties.load(path.join(vhost.ini.baseDir, "config.properties"), config_properties, function (error, p) {
+		if(error) {
+			if(error.code != 'ENOENT') {
+				server.echo('# Unable to load application properties > '.error, error.message);
+			} else {
+				vhost.config = application.config = {};
+			}
+		} else {
+			server.echo('# Application properties ', 'loaded'.info);
+			vhost.config = application.config = p;
+			// Preload controllers
+			preloadControllers(vhost.ini);
+		}
+	});
+};
+
 var sendMail = function(options, fn) {
 	if(server.emailer.transport) {
 		fn = fn || function() {};
@@ -222,9 +271,6 @@ var run = function(conf) {
 		});
 	}
 
-	// Preload controllers
-	preloadControllers(conf);
-
 	http.createServer(function (req, res) {
 
 		var urlParsed = url.parse(req.url, true);
@@ -244,100 +290,109 @@ var run = function(conf) {
 
         req.on('end', function() {
             req.data = qs.parse(queryData);
-        
-		    if(pathname == '/') {
-		    	pathname += conf.root;
-		   	}
+        	
+            var vhostName = pathname.substr(1, pathname.substr(1).indexOf('/'));
+            var vhost 	  = server.vhosts[vhostName];
+            
+			if(vhost) {
 
-	    	// Load resource
-			if(pathname.lastIndexOf('.') == -1) {
+	            var resourceFilePath = pathname.substr(vhostName.length + 1);
+	            console.log(resourceFilePath);
+			    if(resourceFilePath == '/') {
+			    	resourceFilePath = '/' + conf.root;
+			   	}
 
-				var params = server.routes.getRoutePathParameters(pathname);
+		    	// Load resource
+				if(resourceFilePath.lastIndexOf('.') == -1) {
 
-				if(params != null && params.controller) {
-					server.runController(params, res, req, conf);
-				} else {
-		            // 404 (FILE_NOT_FOUND)
-		            server.quickr(res, 404, 'FILE_NOT_FOUND');
-		            server.echo('# Controller', 'missing '.error, conf.baseDir + pathname);
-				}
-			} else {
-				var fileExtension 	= pathname.substr(pathname.lastIndexOf('.') + 1).toLowerCase();
-				if(!server.isAuthorizedExtension(fileExtension)) {
-					// 403 Unauthorized
-					server.quickr(res, 403, 'File extension is not allowed by server');
-					server.echo('# File extension is not allowed by server : '.error + fileExtension);
-				} else {
+					var params = server.routes.getRoutePathParameters(resourceFilePath);
 
-					var resourcePath = conf.publicDir + pathname;
-
-					if(fileExtension == 'less')
-					{
-						var cachefile = path.join(conf._cacheDir,  pathname + '.css');
-						if(fs.existsSync(cachefile)) {
-							//resourcePath = cachefile;
-							//fileExtension = 'css';
-						}
+					if(params != null && params.controller) {
+						server.runController(params, res, req, conf);
+					} else {
+			            // 404 (FILE_NOT_FOUND)
+			            server.quickr(res, 404, 'FILE_NOT_FOUND');
+			            server.echo('# Controller', 'missing '.error, vhost.ini.baseDir + resourceFilePath);
 					}
 
-					// Load resource
-				    fs.readFile(resourcePath, function(err, data) { 
-				        if (err) { 
-				            // 404 (FILE_NOT_FOUND)
-				            server.quickr(res, 404, 'FILE_NOT_FOUND');
-				            server.echo('# Resource ', 'not found : '.error, resourcePath.data);
-				        } else {
-				        	// 200 (OK)
+				} else {
+					var fileExtension 	= path.extname(resourceFilePath).toLowerCase().substr(1);
+					if(!server.isAuthorizedExtension(fileExtension)) {
+						// 403 Unauthorized
+						server.quickr(res, 403, 'File extension is not allowed by server');
+						server.echo('# File extension is not allowed by server : '.error + fileExtension);
+					} else {
 
-							if(fileExtension == 'less') {
-								var parser = new(less.Parser)({
-							    	paths: [path.dirname(resourcePath)],
-							    	filename: resourcePath
-								});
-								parser.parse(data.toString(), function (err, tree) {
-								    if (err) { 
+						var resourcePath = path.join(vhost.ini.publicDir, resourceFilePath);
+
+						if(fileExtension == 'less')
+						{
+							var cachefile = path.join(conf._cacheDir,  resourceFilePath + '.css');
+							if(fs.existsSync(cachefile)) {
+								//resourcePath = cachefile;
+								//fileExtension = 'css';
+							}
+						}
+
+						// Load resource
+					    fs.readFile(resourcePath, function(err, data) { 
+					        if (err) { 
+					            // 404 (FILE_NOT_FOUND)
+					            server.quickr(res, 404, 'FILE_NOT_FOUND');
+					            server.echo('# Resource ', 'not found : '.error, resourcePath.data);
+					        } else {
+					        	// 200 (OK)
+
+								if(fileExtension == 'less') {
+									var parser = new(less.Parser)({
+								    	paths: [path.dirname(resourcePath)],
+								    	filename: resourcePath
+									});
+									parser.parse(data.toString(), function (err, tree) {
+									    if (err) { 
+								            // 500 (INTERNAL SERVER ERROR)
+								            server.quickr(res, 500, 'LESS_PARSE_ERROR');
+								            server.echo('# Less parse error : ', err.message.error);
+									    } else {
+									    	var mimeType = mime.lookup('less.css');
+									    	var css = tree.toCSS({ compress: true });
+									    	server.quickr(res, 200, css, mimeType);
+									    	fs.mkdir(path.join(conf._cacheDir, path.dirname(pathname)), function() {
+										    	fs.writeFile(path.join(conf._cacheDir, pathname + '.css'), css, function(err) {
+										    		if(err) {
+										    			server.echo('# Unable to cache file : ', resourcePath, err.message.red);
+										    		} else {
+										    			server.echo('# Update cache file : ', resourcePath);
+										    		}
+										    	});	
+									    	});
+									    	
+									    }
+									});
+
+								} else if(fileExtension == 'coffee') {
+									try {
+										var js = coffee.compile(data.toString());
+										var mimeType = mime.lookup('coffee.js');
+										server.quickr(res, 200, js, mimeType);
+									} catch(exception) {
 							            // 500 (INTERNAL SERVER ERROR)
-							            server.quickr(res, 500, 'LESS_PARSE_ERROR');
-							            server.echo('# Less parse error : ', err.message.error);
-								    } else {
-								    	var mimeType = mime.lookup('less.css');
-								    	var css = tree.toCSS({ compress: true });
-								    	server.quickr(res, 200, css, mimeType);
-								    	fs.mkdir(path.join(conf._cacheDir, path.dirname(pathname)), function() {
-									    	fs.writeFile(path.join(conf._cacheDir, pathname + '.css'), css, function(err) {
-									    		if(err) {
-									    			server.echo('# Unable to cache file : ', resourcePath, err.message.red);
-									    		} else {
-									    			server.echo('# Update cache file : ', resourcePath);
-									    		}
-									    	});	
-								    	});
-								    	
-								    }
-								});
+							            server.quickr(res, 500, 'COFFEESCRIPT_COMPILE_ERROR');
+							            server.echo('# Coffee script compile error : ', exception.message.error);
+									}
+									
+								} else {
 
-							} else if(fileExtension == 'coffee') {
-								try {
-									var js = coffee.compile(data.toString());
-									var mimeType = mime.lookup('coffee.js');
-									server.quickr(res, 200, js, mimeType);
-								} catch(exception) {
-						            // 500 (INTERNAL SERVER ERROR)
-						            server.quickr(res, 500, 'COFFEESCRIPT_COMPILE_ERROR');
-						            server.echo('# Coffee script compile error : ', exception.message.error);
-								}
-								
-							} else {
-
-					        	var mimeType = mime.lookup(resourcePath);
-					        	server.quickr(res, 200, data, mimeType);
-					        	if(!mimeType) {
-					        		server.echo('# No mime type found' .error + ' : file ' + pathname);
+						        	var mimeType = mime.lookup(resourcePath);
+						        	server.quickr(res, 200, data, mimeType);
+						        	if(!mimeType) {
+						        		server.echo('# No mime type found' .error + ' : file ' + pathname);
+						        	}
 					        	}
-				        	}
-				        } 
-				    });
+					        } 
+					    });
 
+					}
 				}
 			}
 		});
@@ -353,13 +408,6 @@ var run = function(conf) {
 };
 
 // Load properties
-
-var config_properties = {
-    comment: "#",
-    separator: "=",
-    sections: true
-};
-
 properties.load("./conf/server.properties", config_properties, function (error, p) {
 	if(error) {
 		server.echo('# Unable to load server properties > '.error, error.message);
@@ -367,20 +415,8 @@ properties.load("./conf/server.properties", config_properties, function (error, 
 		server.echo('# Server properties ' + 'loaded'.info);
 		server.applyConfiguration(p);
 
-		properties.load(path.join(p.baseDir, "config.properties"), config_properties, function (error, p) {
-			if(error) {
-				if(error.code != 'ENOENT') {
-					server.echo('# Unable to load application properties > '.error, error.message);
-				} else {
-					application.config = {};
-					run(server.config);
-				}
-			} else {
-				server.echo('# Application properties ', 'loaded'.info);
-				application.config = p;
-				run(server.config);
-			}
-		});
+		loadVirtualHosts(p);
+
 	}
 });
 
