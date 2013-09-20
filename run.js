@@ -15,10 +15,6 @@ var properties  	= require('properties');
 var mime			= require('mime');
 //https://github.com/flatiron/winston
 var winston			= require('winston');
-//http://lesscss.org/
-var less			= require('less');
-//http://coffeescript.org/documentation/docs/coffee-script.html
-var coffee			= require('coffee-script');
 //https://github.com/ashtuchkin/iconv-lite
 var iconv 			= require('iconv-lite');
 //https://github.com/andris9/Nodemailer
@@ -174,14 +170,14 @@ server.runController = function(params, response, request, conf) {
 	}
 };
 
-var preloadControllers = function(conf) {
+var preloadControllers = function(baseDir) {
 	server.echo('# Preload controllers'.info);
-	var controllersDirectory = path.join(conf.baseDir, 'controllers');
+	var controllersDirectory = baseDir?path.join(baseDir, 'controllers/'):'./controllers/';
 	fs.readdir(controllersDirectory, function(err, list) {
 		if(!err) {
 			list.forEach(function(file) {
 				if(path.extname(file) == '.js') {
-					require(path.join(controllersDirectory, file));
+					require(controllersDirectory + file);
 					server.echo('# Controller', file.info, 'preloaded');
 				};
 			});
@@ -216,7 +212,9 @@ var loadVirtualHosts = function(conf) {
 			});
 			run(conf);
 		} else {
-			server.echo(err.message.error);
+			server.echo(err.message.warn);
+			preloadControllers();
+			run(conf);
 		}
 	});
 };
@@ -233,7 +231,7 @@ var loadVHostConf = function(vhost) {
 			server.echo('# Application properties ', 'loaded'.info);
 			vhost.config = application.config = p;
 			// Preload controllers
-			preloadControllers(vhost.ini);
+			preloadControllers(vhost.baseDir);
 		}
 	});
 };
@@ -293,14 +291,24 @@ var run = function(conf) {
         	
             var vhostName = pathname.substr(1, pathname.substr(1).indexOf('/'));
             var vhost 	  = server.vhosts[vhostName];
-            
+            var resourcePath = '';
+            var resourceFilePath = null; 
 			if(vhost) {
 
-	            var resourceFilePath = pathname.substr(vhostName.length + 1);
-	            console.log(resourceFilePath);
+	            resourceFilePath = pathname.substr(vhostName.length + 1);
 			    if(resourceFilePath == '/') {
 			    	resourceFilePath = '/' + conf.root;
 			   	}
+
+				resourcePath = path.join(vhost.ini.publicDir, resourceFilePath);
+
+
+			} else {
+				resourceFilePath = req.path.pathname;
+				resourcePath = '.' + resourceFilePath;
+			}
+
+			if(resourceFilePath) {
 
 		    	// Load resource
 				if(resourceFilePath.lastIndexOf('.') == -1) {
@@ -312,7 +320,7 @@ var run = function(conf) {
 					} else {
 			            // 404 (FILE_NOT_FOUND)
 			            server.quickr(res, 404, 'FILE_NOT_FOUND');
-			            server.echo('# Controller', 'missing '.error, vhost.ini.baseDir + resourceFilePath);
+			            server.echo('# Controller', 'missing '.error, resourcePath);
 					}
 
 				} else {
@@ -323,17 +331,6 @@ var run = function(conf) {
 						server.echo('# File extension is not allowed by server : '.error + fileExtension);
 					} else {
 
-						var resourcePath = path.join(vhost.ini.publicDir, resourceFilePath);
-
-						if(fileExtension == 'less')
-						{
-							var cachefile = path.join(conf._cacheDir,  resourceFilePath + '.css');
-							if(fs.existsSync(cachefile)) {
-								//resourcePath = cachefile;
-								//fileExtension = 'css';
-							}
-						}
-
 						// Load resource
 					    fs.readFile(resourcePath, function(err, data) { 
 					        if (err) { 
@@ -342,52 +339,10 @@ var run = function(conf) {
 					            server.echo('# Resource ', 'not found : '.error, resourcePath.data);
 					        } else {
 					        	// 200 (OK)
-
-								if(fileExtension == 'less') {
-									var parser = new(less.Parser)({
-								    	paths: [path.dirname(resourcePath)],
-								    	filename: resourcePath
-									});
-									parser.parse(data.toString(), function (err, tree) {
-									    if (err) { 
-								            // 500 (INTERNAL SERVER ERROR)
-								            server.quickr(res, 500, 'LESS_PARSE_ERROR');
-								            server.echo('# Less parse error : ', err.message.error);
-									    } else {
-									    	var mimeType = mime.lookup('less.css');
-									    	var css = tree.toCSS({ compress: true });
-									    	server.quickr(res, 200, css, mimeType);
-									    	fs.mkdir(path.join(conf._cacheDir, path.dirname(pathname)), function() {
-										    	fs.writeFile(path.join(conf._cacheDir, pathname + '.css'), css, function(err) {
-										    		if(err) {
-										    			server.echo('# Unable to cache file : ', resourcePath, err.message.red);
-										    		} else {
-										    			server.echo('# Update cache file : ', resourcePath);
-										    		}
-										    	});	
-									    	});
-									    	
-									    }
-									});
-
-								} else if(fileExtension == 'coffee') {
-									try {
-										var js = coffee.compile(data.toString());
-										var mimeType = mime.lookup('coffee.js');
-										server.quickr(res, 200, js, mimeType);
-									} catch(exception) {
-							            // 500 (INTERNAL SERVER ERROR)
-							            server.quickr(res, 500, 'COFFEESCRIPT_COMPILE_ERROR');
-							            server.echo('# Coffee script compile error : ', exception.message.error);
-									}
-									
-								} else {
-
-						        	var mimeType = mime.lookup(resourcePath);
-						        	server.quickr(res, 200, data, mimeType);
-						        	if(!mimeType) {
-						        		server.echo('# No mime type found' .error + ' : file ' + pathname);
-						        	}
+					        	var mimeType = mime.lookup(resourcePath);
+					        	server.quickr(res, 200, data, mimeType);
+					        	if(!mimeType) {
+					        		server.echo('# No mime type found' .error + ' : file ' + pathname);
 					        	}
 					        } 
 					    });
