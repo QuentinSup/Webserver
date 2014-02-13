@@ -138,7 +138,7 @@ var couchdb = (function() {
 		} else {
 
 			server.quickr(response, 501);
-			server.echo('> Request is not implemented'.red);
+			server.echo('> COUCHDB Request is not implemented'.red);
 		}
 
 	};
@@ -155,8 +155,12 @@ var couchdb = (function() {
 
 })();
 
-couchdb.connect(application.config.couchdb.host, application.config.couchdb.port, application.config.couchdb.protocol);
-couchdb.use(application.config.couchdb.dbname);
+if(application.config.couchdb) {
+	couchdb.connect(application.config.couchdb.host, application.config.couchdb.port, application.config.couchdb.protocol);
+	couchdb.use(application.config.couchdb.dbname);
+} else {
+	server.echo('> COUCHDB No configuration found for couchdb plugin'.red);
+}
 
 // Register controller
 server.controllers.register('couchdb', couchdb);

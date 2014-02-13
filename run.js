@@ -21,12 +21,13 @@ var iconv 			= require('iconv-lite');
 var mailer			= require('nodemailer');
 
 colors.setTheme({
-	info 	: 'green',
-	data 	: 'white',
-	help 	: 'cyan',
-	warn 	: 'yellow',
-	debug 	: 'blue',
-	error 	: 'red'
+	info 		: 'cyan',
+	success 	: 'green',
+	data 		: 'white',
+	help 		: 'cyan',
+	warn 		: 'yellow',
+	debug 		: 'grey',
+	error 		: 'red'
 });
 
 var config_properties = {
@@ -45,22 +46,24 @@ require('./modules/_routes');
 
 server.application = application = {};
 server.vhosts = vhosts = {};
+server.helpers = helpers = {};
 
-server.quickr = function(response, statusCode, data, mimeType) {
+server.quickr = function(response, statusCode, data, mimeType, encoding) {
+	encoding = encoding || 'utf8';
 	try {
 		mimeType = mimeType || 'text/plain';
 		response.writeHead(statusCode, {'Content-Type': mimeType });
-		response.end(data, 'utf8');
+		response.end(data, encoding);
 	} catch(exception) {
 		server.echo('# Unable to return response > '.error, exception);	
 		// 500 Internal Server Error
 		response.writeHead(500);
-		response.end(data, 'utf8');
+		response.end(data, encoding);
 	}
 };
 
-server.quickrJSON = function(response, statusCode, data) {
-	server.quickr(response, statusCode, JSON.stringify(data), 'application/json');
+server.quickrJSON = function(response, statusCode, data, encoding) {
+	server.quickr(response, statusCode, JSON.stringify(data), 'application/json', encoding);
 };
 
 // Make server.echo an alias of console.log
@@ -105,7 +108,7 @@ server.applyConfiguration = function(conf) {
 
 	fs.mkdir(conf._cacheDir, function(err) {
 		if(err && err.code != 'EEXIST') {
-			server.echo('# Unable to create cache directory :', err.message.red);
+			server.echo('# Unable to create cache directory :', err.message.error);
 		}
 	});
 
@@ -130,14 +133,26 @@ server.plugins = function(name) {
 	return require('./' + path.join('plugins', name, name + '.js'));
 };
 
-server.writeFileToCache = function(fileName, data, fn) {
-	var cachefile = path.join(server.config._cacheDir, fileName);
-	fs.writeFile(cachefile, data, fn);
+server.toCache = function(fileName, data, fn) {
+	var dirname = path.join(server.config._cacheDir, path.dirname(fileName));
+	var cachefile = path.join(dirname, path.basename(fileName));
+	fs.mkdir(dirname, null, true, function(err) {
+		if(err) {
+			server.echo('> Unable to create cache directory'.error, dirname);
+			fn(err);
+		} else {
+			fs.writeFile(cachefile, data, fn);
+		}
+	});
 };
 
-server.getFileFromCache = function(fileName, fn) {
+server.fromCache = function(fileName, fn) {
 	var cachefile = path.join(server.config._cacheDir, fileName);
-	fs.readFile(cachefile, fn);
+	if(fs.existsSync(cachefile)) {
+		fs.readFile(cachefile, fn);
+		return true;
+	}
+	return false;
 };
 
 server.runController = function(params, response, request, conf) {
@@ -146,20 +161,21 @@ server.runController = function(params, response, request, conf) {
 	if(!server.controllers.exists(params.controller))
 	{
 		try {
-			require(path.join(conf.baseDir, 'controllers', params.controller + '.js'));
+			require(conf.baseDir?path.join(conf.baseDir, 'controllers', params.controller + '.js'):'./controllers/' + params.controller + '.js');
 			server.echo('# Controller', params.controller.info, 'loaded');
 		} catch(exception) {
-			try {
-				server.plugins(params.controller);
-				server.echo('# Controller [server]', params.controller.info, 'loaded');
-			} catch(exception) {
+			//try {
+			//	server.plugins(params.controller);
+			//	server.echo('# Controller [server]', params.controller.info, 'loaded');
+			//} catch(exception) {
 				// 500 Internal Server Error
 				server.quickr(response, 500);
 				server.echo('# Unable to load controller : '.error, params.controller.info);
 				server.echo(exception.message.error);
-			}
+				return;
+			//}
 		}
-	} 
+	}
 	try {
 		server.controllers.run(params, response, request);
 	} catch(exception) {
@@ -187,8 +203,32 @@ var preloadControllers = function(baseDir) {
 	});
 };
 
-var loadVirtualHosts = function(conf) {
-	server.echo('# Load vhosts'.info);
+var loadHelpers = function(fn) {
+	var helpersDir = './helpers/';
+	fs.readdir(helpersDir, function(err, list) {
+		if(!err) {
+			list.forEach(function(file) {
+				var helperFileName = './' + path.join(helpersDir, file) + '/helper.js';
+				if(fs.existsSync(helperFileName)) {
+					server.echo('# Load helper'.info, file);
+					try {
+						require(helperFileName);
+					} catch(err) {
+						server.echo(err.message.error);
+					}
+				} else {
+					server.echo('# Unable to load helper'.error, file);
+				}
+			});
+			fn(null);
+		} else {
+			fn(err);
+			
+		}
+	});
+};
+
+var loadVirtualHosts = function(fn) {
 	var confDir = './conf/vhosts/';
 	fs.readdir(confDir, function(err, list) {
 		if(!err) {
@@ -206,16 +246,21 @@ var loadVirtualHosts = function(conf) {
 							vhost.ini.publicDir = path.join(vhost.ini.baseDir, 'public');
 						}
 						loadVHostConf(vhost);
-						server.echo('# Virtual Hosts', file.info, 'loaded');
 					});
 				};
 			});
-			run(conf);
+			fn(null);
 		} else {
-			server.echo(err.message.warn);
-			preloadControllers();
-			run(conf);
+			fn(err);
 		}
+		
+	});
+};
+
+var emitHelpers = function(command, param) {
+	Object.keys(server.helpers).forEach(function(key) {
+		var helper = server.helpers[key];
+		helper[command](param);
 	});
 };
 
@@ -225,13 +270,15 @@ var loadVHostConf = function(vhost) {
 			if(error.code != 'ENOENT') {
 				server.echo('# Unable to load application properties > '.error, error.message);
 			} else {
+				server.echo('# Virtual Host', vhost.id.magenta, 'loaded'.warn);
 				vhost.config = application.config = {};
 			}
 		} else {
-			server.echo('# Application properties ', 'loaded'.info);
+			server.echo('# Virtual Host', vhost.id.magenta, 'loaded'.success);
 			vhost.config = application.config = p;
 			// Preload controllers
-			preloadControllers(vhost.baseDir);
+			emitHelpers('dovhost', vhost);
+			preloadControllers(vhost.ini.baseDir);
 		}
 	});
 };
@@ -307,14 +354,15 @@ var run = function(conf) {
 				resourceFilePath = req.path.pathname;
 				resourcePath = '.' + resourceFilePath;
 			}
-
+			
 			if(resourceFilePath) {
-
+				var extname = path.extname(resourceFilePath);
+				
 		    	// Load resource
-				if(resourceFilePath.lastIndexOf('.') == -1) {
+				if(!extname) {
 
 					var params = server.routes.getRoutePathParameters(resourceFilePath);
-
+					
 					if(params != null && params.controller) {
 						server.runController(params, res, req, conf);
 					} else {
@@ -330,7 +378,6 @@ var run = function(conf) {
 						server.quickr(res, 403, 'File extension is not allowed by server');
 						server.echo('# File extension is not allowed by server : '.error + fileExtension);
 					} else {
-
 						// Load resource
 					    fs.readFile(resourcePath, function(err, data) { 
 					        if (err) { 
@@ -339,10 +386,14 @@ var run = function(conf) {
 					            server.echo('# Resource ', 'not found : '.error, resourcePath.data);
 					        } else {
 					        	// 200 (OK)
-					        	var mimeType = mime.lookup(resourcePath);
-					        	server.quickr(res, 200, data, mimeType);
-					        	if(!mimeType) {
-					        		server.echo('# No mime type found' .error + ' : file ' + pathname);
+					        	if(!server.helpers['less'].doResource(resourcePath, data, function(err, data, mimeType) {
+					        		server.quickr(res, 200, data, mimeType);
+					        	})) {
+						        	var mimeType = mime.lookup(resourcePath);
+						        	server.quickr(res, 200, data, mimeType);
+						        	if(!mimeType) {
+						        		server.echo('# No mime type found' .error + ' : file ' + pathname);
+						        	}
 					        	}
 					        } 
 					    });
@@ -353,7 +404,7 @@ var run = function(conf) {
 		});
 
 	}).on('error', function(err) {
-		server.echo('# Unable to run server'.error, 'at http://' + conf.server.host + ':', conf.server.port.toString().magenta, '/' , err.message);
+		server.echo('# Unable to run server'.error, 'at http://' + conf.server.host + ':', conf.server.port.toString().info, '/' , err.message);
 		throw err;
 	}).on('listening', function() {
 		server.echo('# Server running at', 'http://'.magenta + '127.0.0.1'.magenta + ':' + conf.server.port.toString().data);
@@ -363,14 +414,25 @@ var run = function(conf) {
 };
 
 // Load properties
-properties.load("./conf/server.properties", config_properties, function (error, p) {
+properties.load("./conf/server.properties", config_properties, function (error, conf) {
 	if(error) {
 		server.echo('# Unable to load server properties > '.error, error.message);
 	} else {
-		server.echo('# Server properties ' + 'loaded'.info);
-		server.applyConfiguration(p);
+		server.echo('# Server properties ' + 'loaded'.success);
+		server.applyConfiguration(conf);
 
-		loadVirtualHosts(p);
+		loadHelpers(function(err) {
+			if(err) {
+				server.echo(err.message.warn);
+			}
+			loadVirtualHosts(function(err) {
+				if(err) {
+					server.echo(err.message.warn);
+					preloadControllers();
+				}
+				run(conf);
+			});
+		});
 
 	}
 });
