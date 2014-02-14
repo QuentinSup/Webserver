@@ -4,34 +4,30 @@ var http			= require('http');
 var nano		 	= require('nano');
 
 server;
-application;
 
-var couchdb = (function() {
-
-	var _conn;
-	var _db;
+var CouchDB = (function() {
 
 	var use = function(dbname) {
-		_db = _conn.use(dbname);
+		this._db = this._conn.use(dbname);
 	};
 
 	var connect = function(host, port, protocol) {
-		return _conn = nano((protocol || 'http') + '://' + host + ':' + port);
+		return this._conn = nano((protocol || 'http') + '://' + host + ':' + port);
 	};
 
 	var get = function(id, fn) {
- 		_db.get(id, fn);
+ 		this._db.get(id, fn);
 	};
 
 	var getAll = function(fn, opts) {
 		opts = opts || {};
 		opts.revs_info = true;
 		opts.include_docs = true;
- 		_db.list(opts, fn);
+ 		this._db.list(opts, fn);
 	};
 
 	var insert = function(id, doc, fn) {
-		_db.insert(doc, id,  function(err, xdoc) {
+		this._db.insert(doc, id,  function(err, xdoc) {
 			if(!err) {
 		    	doc._id = xdoc.id;
 		    	doc._rev = xdoc.rev;
@@ -43,7 +39,7 @@ var couchdb = (function() {
 	};
 
 	var destroy = function(id, rev, fn) {
-		_db.destroy(id, rev, fn);
+		this._db.destroy(id, rev, fn);
 	};
 
 	var run = function(response, request, params) {
@@ -143,27 +139,19 @@ var couchdb = (function() {
 
 	};
 
-	return {
-		connect: connect,
-		get: get,
-		getAll: getAll,
-		insert: insert,
-		destroy: destroy,
-		use: use,
-		run: run
-	};
+	var constructor = function() {
+		this.connect = connect;
+		this.get = get;
+		this.getAll = getAll;
+		this.insert = insert;
+		this.destroy = destroy;
+		this.use = use;
+		this.run = run;
+	}
+
+	return constructor;
 
 })();
 
-if(application.config.couchdb) {
-	couchdb.connect(application.config.couchdb.host, application.config.couchdb.port, application.config.couchdb.protocol);
-	couchdb.use(application.config.couchdb.dbname);
-} else {
-	server.echo('> COUCHDB No configuration found for couchdb plugin'.red);
-}
-
-// Register controller
-server.controllers.register('couchdb', couchdb);
-
 // Export controller (to direct use)
-module.exports = couchdb;
+module.exports = CouchDB;

@@ -2,15 +2,17 @@
 // Core libs
 var http 			= require('http');
 var url  			= require('url');
-var path  			= require('path');
 var qs  			= require('querystring');
-var fs  			= require('node-fs');
 
+util  			= require('util');
+path  			= require('path');
+fs  			= require('node-fs');
+
+//https://github.com/Gagle/Node-Properties
+properties  	= require('properties');
 // Other libs
 //https://github.com/marak/colors.js/
 var colors  	    = require('colors');
-//https://github.com/Gagle/Node-Properties
-var properties  	= require('properties');
 //https://github.com/broofa/node-mime
 var mime			= require('mime');
 //https://github.com/flatiron/winston
@@ -30,7 +32,7 @@ colors.setTheme({
 	error 		: 'red'
 });
 
-var config_properties = {
+config_properties = {
     comment: "#",
     separator: "=",
     sections: true
@@ -41,12 +43,14 @@ server = {}
 server.config = {};
 
 // Import base modules
-require('./modules/_controllers');
 require('./modules/_routes');
+require('./modules/_resources');
+require('./modules/_helpers');
+require('./modules/_vhosts');
 
-server.application = application = {};
-server.vhosts = vhosts = {};
-server.helpers = helpers = {};
+server.argv = {
+	verbose: process.argv.indexOf('--verbose') > -1
+};
 
 server.quickr = function(response, statusCode, data, mimeType, encoding) {
 	encoding = encoding || 'utf8';
@@ -69,10 +73,12 @@ server.quickrJSON = function(response, statusCode, data, encoding) {
 // Make server.echo an alias of console.log
 server.echo = function() {
 	var args = arguments;
+	
 	var self = this;
 	setTimeout(function() {
 		console.log.apply(self, args);
 		if(self.info) {
+			var arguments = [];
 			for(var i = 0, len = args.length; i < len; i++) {
 				if(typeof(args[i]) === 'string') {
 					args[i] = args[i].stripColors;
@@ -115,13 +121,14 @@ server.applyConfiguration = function(conf) {
 	// Set logger
 	server.logger = new (winston.Logger)({
 	    transports: [
-	      new (winston.transports.File)({ filename: conf.log.file || 'server.log', json:false, maxsize:10248576, colorize: false })
+	      new (winston.transports.File)({ level: conf.log.level || 'info', filename: conf.log.file || 'server.log', json:false, maxsize:10248576, colorize: false })
 	    ]
 	});
-	server.logger.cli();
+
+	//server.logger.cli();
 	server.logger.extend(server);
 
-	return 	server.config = serverConfiguration = conf;
+	return server.config = serverConfiguration = conf;
 
 };
 
@@ -155,54 +162,6 @@ server.fromCache = function(fileName, fn) {
 	return false;
 };
 
-server.runController = function(params, response, request, conf) {
-	// Call a controller
-	conf = conf || server.config;
-	if(!server.controllers.exists(params.controller))
-	{
-		try {
-			require(conf.baseDir?path.join(conf.baseDir, 'controllers', params.controller + '.js'):'./controllers/' + params.controller + '.js');
-			server.echo('# Controller', params.controller.info, 'loaded');
-		} catch(exception) {
-			//try {
-			//	server.plugins(params.controller);
-			//	server.echo('# Controller [server]', params.controller.info, 'loaded');
-			//} catch(exception) {
-				// 500 Internal Server Error
-				server.quickr(response, 500);
-				server.echo('# Unable to load controller : '.error, params.controller.info);
-				server.echo(exception.message.error);
-				return;
-			//}
-		}
-	}
-	try {
-		server.controllers.run(params, response, request);
-	} catch(exception) {
-		// 500 Internal Server Error
-		server.quickr(response, 500);
-		server.echo('# Unable to run controller : '.error, params.controller.info);
-		server.echo(exception.message.info);
-	}
-};
-
-var preloadControllers = function(baseDir) {
-	server.echo('# Preload controllers'.info);
-	var controllersDirectory = baseDir?path.join(baseDir, 'controllers/'):'./controllers/';
-	fs.readdir(controllersDirectory, function(err, list) {
-		if(!err) {
-			list.forEach(function(file) {
-				if(path.extname(file) == '.js') {
-					require(controllersDirectory + file);
-					server.echo('# Controller', file.info, 'preloaded');
-				};
-			});
-		} else {
-			server.echo(err.message.error);
-		}
-	});
-};
-
 var loadHelpers = function(fn) {
 	var helpersDir = './helpers/';
 	fs.readdir(helpersDir, function(err, list) {
@@ -210,75 +169,20 @@ var loadHelpers = function(fn) {
 			list.forEach(function(file) {
 				var helperFileName = './' + path.join(helpersDir, file) + '/helper.js';
 				if(fs.existsSync(helperFileName)) {
-					server.echo('# Load helper'.info, file);
 					try {
 						require(helperFileName);
+						server.echo('LOAD'.debug, 'HELPER'.info, 'OK'.success, file);
 					} catch(err) {
-						server.echo(err.message.error);
+						server.echo('LOAD'.debug, 'HELPER'.info, 'ERR'.success, file);
 					}
 				} else {
-					server.echo('# Unable to load helper'.error, file);
+					server.echo('LOAD'.debug, 'HELPER'.info, 'WARN'.warn, file);
 				}
 			});
 			fn(null);
 		} else {
 			fn(err);
 			
-		}
-	});
-};
-
-var loadVirtualHosts = function(fn) {
-	var confDir = './conf/vhosts/';
-	fs.readdir(confDir, function(err, list) {
-		if(!err) {
-			list.forEach(function(file) {
-				if(path.extname(file) == '.properties') {
-					properties.load(path.join(confDir, file), config_properties, function (error, p) {
-						if(error) {
-							console.log(error.message.error);
-						}
-						var vhostId = path.basename(file, '.properties');
-						var vhost = server.vhosts[vhostId] = {};
-						vhost.ini = p || {};
-						vhost.id  = vhostId;
-						if(!vhost.ini.publicDir) {
-							vhost.ini.publicDir = path.join(vhost.ini.baseDir, 'public');
-						}
-						loadVHostConf(vhost);
-					});
-				};
-			});
-			fn(null);
-		} else {
-			fn(err);
-		}
-		
-	});
-};
-
-var emitHelpers = function(command, param) {
-	Object.keys(server.helpers).forEach(function(key) {
-		var helper = server.helpers[key];
-		helper[command](param);
-	});
-};
-
-var loadVHostConf = function(vhost) {
-	properties.load(path.join(vhost.ini.baseDir, "config.properties"), config_properties, function (error, p) {
-		if(error) {
-			if(error.code != 'ENOENT') {
-				server.echo('# Unable to load application properties > '.error, error.message);
-			} else {
-				server.echo('# Virtual Host', vhost.id.magenta, 'loaded'.warn);
-				vhost.config = application.config = {};
-			}
-		} else {
-			server.echo('# Virtual Host', vhost.id.magenta, 'loaded'.success);
-			vhost.config = application.config = p;
-			// Preload controllers
-			emitHelpers('dovhost', vhost);
-			preloadControllers(vhost.ini.baseDir);
 		}
 	});
 };
@@ -317,13 +221,17 @@ var run = function(conf) {
 	}
 
 	http.createServer(function (req, res) {
-
+		
 		var urlParsed = url.parse(req.url, true);
 		var pathname  = urlParsed.pathname;
 		var queryData = '';
 
-		req.path = urlParsed;
+		if(server.argv.verbose) {
+			server.echo('HTTP', req.httpVersion.info, req.method.debug, req.url, req.headers['user-agent'].info);
+		}
 
+		req.path = urlParsed;
+		
 		req.on('data', function(data) {
             queryData += data;
             if(queryData.length > 1e6) {
@@ -331,15 +239,18 @@ var run = function(conf) {
                 res.writeHead(413, {'Content-Type': 'text/plain'});
                 req.connection.destroy();
             }
+            
         });
-
+		
         req.on('end', function() {
+
             req.data = qs.parse(queryData);
         	
             var vhostName = pathname.substr(1, pathname.substr(1).indexOf('/'));
-            var vhost 	  = server.vhosts[vhostName];
+            var vhost 	  = server.vhosts.get(vhostName);
             var resourcePath = '';
             var resourceFilePath = null; 
+
 			if(vhost) {
 
 	            resourceFilePath = pathname.substr(vhostName.length + 1);
@@ -364,7 +275,7 @@ var run = function(conf) {
 					var params = server.routes.getRoutePathParameters(resourceFilePath);
 					
 					if(params != null && params.controller) {
-						server.runController(params, res, req, conf);
+						vhost.run(params, res, req);
 					} else {
 			            // 404 (FILE_NOT_FOUND)
 			            server.quickr(res, 404, 'FILE_NOT_FOUND');
@@ -375,10 +286,11 @@ var run = function(conf) {
 					var fileExtension 	= path.extname(resourceFilePath).toLowerCase().substr(1);
 					if(!server.isAuthorizedExtension(fileExtension)) {
 						// 403 Unauthorized
-						server.quickr(res, 403, 'File extension is not allowed by server');
+						server.quickr(res, 403, 'RESOURCE_DENIED_BY_POLICY');
 						server.echo('# File extension is not allowed by server : '.error + fileExtension);
 					} else {
 						// Load resource
+						
 					    fs.readFile(resourcePath, function(err, data) { 
 					        if (err) { 
 					            // 404 (FILE_NOT_FOUND)
@@ -386,8 +298,12 @@ var run = function(conf) {
 					            server.echo('# Resource ', 'not found : '.error, resourcePath.data);
 					        } else {
 					        	// 200 (OK)
-					        	if(!server.helpers['less'].doResource(resourcePath, data, function(err, data, mimeType) {
-					        		server.quickr(res, 200, data, mimeType);
+					        	if(!server.helpers.emit('resource', resourcePath, data, function(err, data, mimeType) {
+					        		if(err) {
+					        			server.quickr(res, 500, 'INTERNAL_SERVER_ERROR');
+					        		} else {
+					        			server.quickr(res, 200, data, mimeType);	
+					        		}					        		
 					        	})) {
 						        	var mimeType = mime.lookup(resourcePath);
 						        	server.quickr(res, 200, data, mimeType);
@@ -397,18 +313,18 @@ var run = function(conf) {
 					        	}
 					        } 
 					    });
-
+						
 					}
 				}
 			}
+
 		});
 
 	}).on('error', function(err) {
-		server.echo('# Unable to run server'.error, 'at http://' + conf.server.host + ':', conf.server.port.toString().info, '/' , err.message);
+		server.echo('RUN'.debug, 'SERVER'.info, 'ERR'.error, '# Unable to run server'.error, 'at http://' + conf.server.host + ':', conf.server.port.toString().info, '/' , err.message);
 		throw err;
 	}).on('listening', function() {
-		server.echo('# Server running at', 'http://'.magenta + '127.0.0.1'.magenta + ':' + conf.server.port.toString().data);
-		server.echo('# Autorized remote mask :'.grey, (conf.server.host || '').data);	
+		server.echo('RUN'.debug, 'SERVER'.info, 'OK'.success, 'Server running at', 'http://'.magenta + '127.0.0.1'.magenta + ':' + conf.server.port.toString().data, '# Autorized remote mask :'.grey, (conf.server.host || '').data);
 	}).listen(conf.server.port, conf.server.host);
 
 };
@@ -416,19 +332,18 @@ var run = function(conf) {
 // Load properties
 properties.load("./conf/server.properties", config_properties, function (error, conf) {
 	if(error) {
-		server.echo('# Unable to load server properties > '.error, error.message);
+		server.echo('LOAD'.debug, 'CONF'.info, 'ERR'.error, 'Server properties'.error, error.message);
 	} else {
-		server.echo('# Server properties ' + 'loaded'.success);
+		server.echo('LOAD'.debug, 'CONF'.info, 'OK'.success, 'Server properties');
 		server.applyConfiguration(conf);
 
 		loadHelpers(function(err) {
 			if(err) {
 				server.echo(err.message.warn);
 			}
-			loadVirtualHosts(function(err) {
+			server.vhosts.prepare(function(err) {
 				if(err) {
 					server.echo(err.message.warn);
-					preloadControllers();
 				}
 				run(conf);
 			});
