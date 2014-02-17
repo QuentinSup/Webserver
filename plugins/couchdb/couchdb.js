@@ -51,7 +51,7 @@ var CouchDB = (function() {
 			if(pid) {
 
 				if(pid == '*') {
-			 		getAll(function(err, docs) {
+			 		this.getAll(function(err, docs) {
 				        if(!err) {
 					    	server.quickrJSON(response, 200, docs.rows);
 						} else {
@@ -60,7 +60,7 @@ var CouchDB = (function() {
 						}
 				    });
 				} else {
-			 		get(pid, function(err, doc) {
+			 		this.get(pid, function(err, doc) {
 				        if(!err) {
 					    	server.quickrJSON(response, 200, doc);
 						} else {
@@ -80,7 +80,7 @@ var CouchDB = (function() {
 			var pid = request.path.query.id;
 			var prev = request.path.query.rev;
 
-			get(pid, function(err, doc) {
+			this.get(pid, function(err, doc) {
 
 				if(!err) {
 
@@ -105,7 +105,7 @@ var CouchDB = (function() {
 
 			var doc = request.data;
 
-			insert(doc.id, doc, function(err, doc) {
+			this.insert(doc.id, doc, function(err, doc) {
 				if(!err) {
 			    	server.echo('> COUCHDB document created'.green);
 			    	server.quickrJSON(response, 201, doc);
@@ -121,7 +121,7 @@ var CouchDB = (function() {
 			var pid = request.path.query.id;
 			var prev = request.path.query.rev;
 
-			destroy(pid, prev, function(err, doc) {
+			this.destroy(pid, prev, function(err, doc) {
 				if(!err) {
 			    	server.echo('> COUCHDB document ' + pid.magenta + ' destroyed'.green);
 			    	server.quickrJSON(response, 200, doc);

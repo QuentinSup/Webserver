@@ -58,7 +58,7 @@ var VirtualHost = function() {
 		if(!this.controllers.exists(params.controller))
 		{
 			try {
-				require(this.ini.baseDir?path.join(this.ini.baseDir, 'controllers', params.controller + '.js'):'./controllers/' + params.controller + '.js');
+				this.requirevhost(this.ini.baseDir?path.join(this.ini.baseDir, 'controllers', params.controller + '.js'):'./controllers/' + params.controller + '.js');
 				server.echo('# Controller', params.controller.info, 'loaded');
 			} catch(exception) {
 				//try {
@@ -79,8 +79,24 @@ var VirtualHost = function() {
 			// 500 Internal Server Error
 			server.quickr(response, 500);
 			server.echo('# Unable to run controller : '.error, params.controller.info);
-			server.echo(exception.message.info);
+			server.echo(exception.message.error);
 		}
+	};
+
+	var requirevhost = function(file) {
+		try {
+			var newModule = new Module(file, module);
+			var controller = newModule.loadInContext({ 
+				server: server,
+				application: this.application,
+				__basedir: this.ini.baseDir })
+			var basename = path.basename(file);
+			this.controllers.register(basename.substr(0, basename.length - path.extname(file).length), controller);
+			server.echo('PRELOAD'.debug, 'CONTROLLER'.info, 'OK'.success, file);
+		} catch(err) {
+			server.echo('PRELOAD'.debug, 'CONTROLLER'.info, 'ERR'.error, file, err.message.error);
+		}
+
 	};
 
 	var loadControllers = function() {
@@ -90,23 +106,7 @@ var VirtualHost = function() {
 			if(!err) {
 				list.forEach(function(file) {
 					if(path.extname(file) == '.js') {
-						try {
-							var sandbox = {
-								exports: {},
-								require: require,
-								__MODULE: controllersDirectory + file,
-								application: self.application
-							};
-							var context = vm.createContext(sandbox);
-							var code = vm.createScript('require(__MODULE);');
-							code.runInContext(context);
-							var controller = sandbox.exports;
-							self.controllers.register(controller);
-							server.echo('PRELOAD'.debug, 'CONTROLLER'.info, 'OK'.success, file);
-							
-						} catch(exception) {
-							server.echo('PRELOAD'.debug, 'CONTROLLER'.info, 'ERR'.error, file, exception.message.error);
-						}
+						self.requirevhost(controllersDirectory + file);
 					};
 				});
 			} else {
@@ -139,6 +139,7 @@ var VirtualHost = function() {
 		this.id = id;
 		this.ini = conf;
 		this.run = run;
+		this.requirevhost = requirevhost;
 		this.controllers = new Controllers();
 
 		if(!this.ini.publicDir) {
@@ -201,5 +202,75 @@ var vhosts = function() {
 	};
 
 }();
+
+var Module 			= require('module');
+Module.prototype.loadInContext = function(global) {
+	var self			= this;
+	var filename 		= Module._resolveFilename(this.id, this);
+	var dirname 		= path.dirname(filename);
+
+	Module._cache[filename] = this;
+	this.filename 	= filename;
+	this.paths 		= Module._nodeModulePaths(dirname);
+
+	var content = fs.readFileSync(filename, 'utf-8');
+		//stripBOM
+	if (content.charCodeAt(0) === 0xFEFF) {
+		content = content.slice(1);
+	}
+
+	content = content.replace(/^\#\!.*/, '');
+
+	function require(path) {
+	    return self.require(path);
+	}
+
+	require.resolve = function(request) {
+		return Module._resolveFilename(request, self);
+	};
+
+	Object.defineProperty(require, 'paths', { get: function() {
+		throw new Error('require.paths is removed. Use ' +
+	                'node_modules folders, or the NODE_PATH ' +
+	                'environment variable instead.');
+	}});
+
+	require.main = process.mainModule;
+
+	// Enable support to add extra extension types
+	require.extensions = Module._extensions;
+	require.registerExtension = function() {
+		throw new Error('require.registerExtension() removed. Use ' +
+	                'require.extensions instead.');
+	};
+
+	require.cache = Module._cache;
+
+	var extend = require('util')._extend;
+	var sandbox = extend(global, {
+		exports: {},
+		module: this,
+		require: require,
+		setTimeout: setTimeout,
+		setInterval: setInterval,
+		clearInterval: clearInterval,
+		Buffer: Buffer,
+		console: console,
+		__filename: filename,
+		__dirname: dirname
+	});
+
+	this.sandbox = sandbox;
+
+	sandbox.global = sandbox;
+
+	var context = vm.createContext(sandbox);
+	var code = vm.createScript(content);
+	this.exports = code.runInContext(context);
+
+	this.loaded = true;	
+
+	return this.exports;
+};
 
 exports = server.vhosts = vhosts;
